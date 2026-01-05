@@ -1,19 +1,19 @@
 from langchain_core.tools import tool
 import datetime
+import os
 import requests
 
 @tool
 def get_current_time() -> str:
-    """获取当前日期和时间"""
+    """获取当前的日期和时间"""
     return datetime.datetime.now().strftime("%Y年%m月%d日 %H:%M")
 
 @tool
-def get_weather(location: str) -> str:
-    """获取指定城市的天气（模拟）"""
-    # 实际项目可接入和风天气、OpenWeather 等 API
-    weather_map = {
-        "北京": "晴，25°C",
-        "上海": "多云，28°C",
-        "东京": "小雨，22°C"
-    }
-    return weather_map.get(location, f"未知城市：{location}")
+def get_sys_info() -> str:
+    """获取当前系统信息"""
+    return f"当前系统{os.uname()}"
+
+@tool
+def search_memory(query: str) -> str:
+    """从长期记忆中搜索相关信息（实际逻辑在 Chatbot 类中绑定）"""
+    return "未绑定检索器"  # 占位
