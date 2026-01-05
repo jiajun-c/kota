@@ -38,11 +38,6 @@ def get_sys_info() -> str:
     return f"当前系统{os.uname()}"
 
 @tool
-def get_current_time() -> str:
-    """获取当前的日期和时间"""
-    return datetime.datetime.now().strftime("%Y年%m月%d日 %H:%M")
-
-@tool
 def search_memory(query: str) -> str:
     """从长期记忆中搜索相关信息（实际逻辑在 Chatbot 类中绑定）"""
     return "未绑定检索器"  # 占位
@@ -52,7 +47,6 @@ def search_memory(query: str) -> str:
 class KatoState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     long_term_memory: str
-
 
 class KatoChatbot:
     def __init__(
@@ -74,7 +68,13 @@ class KatoChatbot:
             max_tokens=max_tokens,
             streaming=True
         )
-
+        self.summarize_chain = (
+            ChatPromptTemplate.from_messages([
+                ("system", "你是一个细心的记录员，请将以下对话总结为一段简洁、连贯的中文摘要，保留关键信息。"),
+                ("human", "{dialogue}")
+            ])
+            | self.llm
+        )
         try:
             self.embeddings = OpenAIEmbeddings(
                 api_key=api_key,
@@ -168,6 +168,7 @@ class KatoChatbot:
         if not query:
             return "无相关信息"
         docs = self.retriever.invoke(query)
+        print([d.page_content for d in docs])
         return "\n".join([d.page_content for d in docs]) if docs else "无相关信息"
 
     async def _stream_response(self, user_input: str) -> str:
@@ -211,18 +212,35 @@ class KatoChatbot:
         ai_message = AIMessage(content=ai_response)
         user_message = HumanMessage(content=user_input)
 
-        # 保存到长期记忆（简单策略）
-        if len(user_input.strip()) > 2 and "无相关信息" not in ai_response:
-            memory_text = f"用户说：{user_input}"
+        # === 新增：会话摘要记忆 ===
+        # 将新消息加入临时历史（用于判断是否摘要）
+        new_history = self._full_history + [user_message, ai_message]
+
+        # 每 6 条消息（3 轮）触发一次摘要
+        if len(new_history) % 6 == 0 and len(new_history) >= 6:
             try:
+                # 取最近 6 条消息生成摘要
+                recent_msgs = new_history[-6:]
+                dialogue_text = "\n".join(
+                    f"{'用户' if isinstance(m, HumanMessage) else 'Kato'}: {m.content}"
+                    for m in recent_msgs
+                )
+                
+                # 调用 LLM 生成摘要
+                summary_response = self.summarize_chain.invoke({"dialogue": dialogue_text})
+                summary = summary_response.content.strip()
+                
+                # 保存摘要到长期记忆
+                memory_text = f"【对话摘要】{summary}"
                 self.vectorstore.add_texts([memory_text])
                 self.vectorstore.save_local(MEMORY_PATH)
-                print(f"💾 已保存记忆: {memory_text[:100]}...")
+                print(f"🧠 已生成并保存对话摘要: {summary[:100]}...")
+                
             except Exception as e:
-                print(f"⚠️ 保存长期记忆失败: {e}")
+                print(f"⚠️ 生成摘要失败: {e}")
 
-        # 更新可见历史（不包括 ToolMessage）
-        self._full_history.extend([user_message, ai_message])
+        # 更新可见历史（仍保留完整对话用于上下文）
+        self._full_history = new_history
         return ai_response
 
     def reset(self):
