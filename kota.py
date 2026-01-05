@@ -190,20 +190,11 @@ class KatoChatbot:
 
         return full_response
 
-    def chat(self, user_input: str) -> str:
-        ai_response = asyncio.run(self._stream_response(user_input))
-        ai_message = AIMessage(content=ai_response)
-        user_message = HumanMessage(content=user_input)
-
-        # === 新增：会话摘要记忆 ===
-        # 将新消息加入临时历史（用于判断是否摘要）
-        new_history = self._full_history + [user_message, ai_message]
-
-        # 每 6 条消息（3 轮）触发一次摘要
-        if len(new_history) % 6 == 0 and len(new_history) >= 6:
+    async def summary(self, history) -> str:
+        if len(history) > 0:
             try:
                 # 取最近 6 条消息生成摘要
-                recent_msgs = new_history[-6:]
+                recent_msgs = history[:]
                 dialogue_text = "\n".join(
                     f"{'用户' if isinstance(m, HumanMessage) else 'Kato'}: {m.content}"
                     for m in recent_msgs
@@ -217,14 +208,27 @@ class KatoChatbot:
                 memory_text = f"【对话摘要】{summary}"
                 self.vectorstore.add_texts([memory_text])
                 self.vectorstore.save_local(MEMORY_PATH)
-                print(f"🧠 已生成并保存对话摘要: {summary[:100]}...")
-                self._full_history = recent_msgs
+                # print(f"🧠 已生成并保存对话摘要: {summary[:100]}...")
+                # self._full_history = recent_msgs
             except Exception as e:
                 print(f"⚠️ 生成摘要失败: {e}")
+    def chat(self, user_input: str) -> str:
+        ai_response = asyncio.run(self._chat(user_input))
+        return ai_response
+    async def _chat(self, user_input: str) -> str:
+        # ai_response = asyncio.run(self._stream_response(user_input))
+        response_task = asyncio.create_task(self._stream_response(user_input))
+        if (len(self._full_history)  >= 6):
+            summary_task = asyncio.create_task(self.summary(self._full_history))
 
-        # 更新可见历史（仍保留完整对话用于上下文）
-        else:
-            self._full_history = new_history
+        ai_response = await response_task
+        if (len(self._full_history)  >= 6):
+            await summary_task
+            self._full_history == self._full_history[6:]
+        ai_message = AIMessage(content=ai_response)
+        user_message = HumanMessage(content=user_input)
+
+        self._full_history = self._full_history + [user_message, ai_message]
         return ai_response
 
     def reset(self):
