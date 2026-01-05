@@ -65,11 +65,11 @@ def open_application(app_name: str):
     :param app_name: 要打开的应用程序的名称（如 "firefox"）
     """
     syspath = "/usr/share/applications/"
-    fullpath = syspath + app_name + ".desktop"
+    fullpath = os.path.join(syspath, f"{app_name}.desktop")
     try:
         subprocess.Popen([
             "kioclient",
             "exec", fullpath
-        ])
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception as e:
         print(f"❌ 启动失败: {e}")

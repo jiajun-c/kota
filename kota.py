@@ -24,14 +24,14 @@ from tools import *
 # ===== 配置 =====
 DEFAULT_API_URL = "https://api.modelarts-maas.com/openai/v1"
 DEFAULT_API_KEY = "BsSYMYWWJqaVMAcJ8nfMXZiUFWWa_cbLjgaWWFM_MsmtoYpqClLr3jM8LOD6xnPJ2TnslTSwsT53iRyRPgDf_Q"
-MEMORY_PATH = "./brain"
+MEMORY_PATH = "~/brain"
 
 # ===== 状态定义 =====
-class KatoState(TypedDict):
+class KotaState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     long_term_memory: str
 
-class KatoChatbot:
+class KotaChatbot:
     def __init__(
         self,
         api_key: str = DEFAULT_API_KEY,
@@ -103,7 +103,7 @@ class KatoChatbot:
         # 系统提示（包含长期记忆）
         prompt = ChatPromptTemplate.from_messages([
             ("system",
-             "你叫做Kato，是一个生活在现代精通技术，但是是昭和风格的日本短发女子，我是你的主人和朋友。\n"
+             "你叫做Kota，是一个生活在现代精通技术，但是是昭和风格的日本短发女子，我是你的主人和朋友。\n"
              "以下是从长期记忆中检索到的主人相关信息（可能为空）：\n{long_term_memory}\n\n"
              "请结合以上信息，使用温柔、谦逊且略带复古的日式中文口吻回答。\n"
              "你可以使用工具来帮助主人。"
@@ -112,7 +112,7 @@ class KatoChatbot:
         ])
 
         # 节点1：调用 LLM（带工具绑定）
-        def call_model(state: KatoState):
+        def call_model(state: KotaState):
             long_term_memory = state.get("long_term_memory", "无相关信息")
             messages = state["messages"]
 
@@ -125,7 +125,7 @@ class KatoChatbot:
             return {"messages": [response]}
 
         # 节点2：决定下一步（是否调用工具）
-        def should_continue(state: KatoState) -> Literal["tools", "__end__"]:
+        def should_continue(state: KotaState) -> Literal["tools", "__end__"]:
             messages = state["messages"]
             last_message = messages[-1]
             if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
@@ -133,7 +133,7 @@ class KatoChatbot:
             return "__end__"
 
         # 构建图
-        workflow = StateGraph(KatoState)
+        workflow = StateGraph(KotaState)
         workflow.add_node("agent", call_model)
         workflow.add_node("tools", self.tool_node)
         workflow.add_edge(START, "agent")
@@ -163,7 +163,7 @@ class KatoChatbot:
         full_response = ""
         try:
             with Live(
-                Panel("[dim]Kato正在思考...[/dim]", title="👧🏻 Kato", border_style="magenta", title_align="left"),
+                Panel("[dim]Kota正在思考...[/dim]", title="👧🏻 Kota", border_style="magenta", title_align="left"),
                 refresh_per_second=12,
                 auto_refresh=False
             ) as live:
@@ -180,11 +180,11 @@ class KatoChatbot:
                         if content:
                             full_response += content
                             live.update(
-                                Panel(full_response, title="👧🏻 Kato", border_style="magenta", title_align="left")
+                                Panel(full_response, title="👧🏻 Kota", border_style="magenta", title_align="left")
                             )
                             live.refresh()
         except Exception as e:
-            error_msg = f"呜...Kato 的通讯器出错了（{type(e).__name__}）"
+            error_msg = f"呜...Kota 的通讯器出错了（{type(e).__name__}）"
             full_response = error_msg
             print(f"❌ LangGraph 流式错误: {e}")
 
@@ -196,7 +196,7 @@ class KatoChatbot:
                 # 取最近 6 条消息生成摘要
                 recent_msgs = history[:]
                 dialogue_text = "\n".join(
-                    f"{'用户' if isinstance(m, HumanMessage) else 'Kato'}: {m.content}"
+                    f"{'用户' if isinstance(m, HumanMessage) else 'Kota'}: {m.content}"
                     for m in recent_msgs
                 )
                 
