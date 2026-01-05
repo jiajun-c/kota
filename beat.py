@@ -1,10 +1,9 @@
 from kota import KatoChatbot
 
 
-
 # ===== 主程序 =====
-if __name__ == '__main__':
-    exit_keywords = ["再见", "拜拜", "さようなら", "exit", "quit", "退出"]
+def main():
+    exit_keywords = ["再见", "拜拜", "bye", "さようなら", "exit", "quit", "退出"]
     
     # 初始化 Kato
     kato = KatoChatbot()
@@ -31,3 +30,6 @@ if __name__ == '__main__':
             break
         except Exception as e:
             print(f"\n⚠️  发生了意外错误: {type(e).__name__}: {e}")
+            
+if __name__ == '__main__':
+   main()  # ✅ 启动异步主循环
