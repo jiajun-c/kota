@@ -1,19 +1,58 @@
 # coding=utf-8
 import asyncio
-from typing import List
-from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.vectorstores import FAISS  # ✅ 修复拼写错误
-from rich.live import Live
-from rich.panel import Panel
+import datetime
 import os
 import readline
+from typing import List, Annotated, Sequence, Literal, TypedDict
+
+from langchain_core.messages import (
+    HumanMessage, AIMessage, ToolMessage, BaseMessage
+)
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.tools import tool
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode
+from langgraph.graph.message import add_messages
+from rich.live import Live
+from rich.panel import Panel
+
 
 # ===== 配置 =====
-DEFAULT_API_URL = "https://api.modelarts-maas.com/openai/v1"  # ✅ 移除多余空格
+DEFAULT_API_URL = "https://api.modelarts-maas.com/openai/v1"
 DEFAULT_API_KEY = "BsSYMYWWJqaVMAcJ8nfMXZiUFWWa_cbLjgaWWFM_MsmtoYpqClLr3jM8LOD6xnPJ2TnslTSwsT53iRyRPgDf_Q"
 MEMORY_PATH = "./brain"
+
+
+# ===== 工具定义 =====
+@tool
+def get_current_time() -> str:
+    """获取当前的日期和时间"""
+    return datetime.datetime.now().strftime("%Y年%m月%d日 %H:%M")
+
+@tool
+def get_sys_info() -> str:
+    """获取当前系统信息"""
+    return f"当前系统{os.uname()}"
+
+@tool
+def get_current_time() -> str:
+    """获取当前的日期和时间"""
+    return datetime.datetime.now().strftime("%Y年%m月%d日 %H:%M")
+
+@tool
+def search_memory(query: str) -> str:
+    """从长期记忆中搜索相关信息（实际逻辑在 Chatbot 类中绑定）"""
+    return "未绑定检索器"  # 占位
+
+
+# ===== 状态定义 =====
+class KatoState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    long_term_memory: str
+
 
 class KatoChatbot:
     def __init__(
@@ -25,8 +64,8 @@ class KatoChatbot:
         max_tokens: int = 1024
     ):
         base_url = base_url.strip()
-        
-        # 初始化 LLM
+
+        # === 初始化 LLM 和 Embeddings ===
         self.llm = ChatOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -36,22 +75,18 @@ class KatoChatbot:
             streaming=True
         )
 
-        # ✅ 尝试初始化 Embedding（带错误处理）
         try:
             self.embeddings = OpenAIEmbeddings(
                 api_key=api_key,
                 base_url="https://api.modelarts-maas.com/v1",
-                model="bge-m3"  # ✅ 常见的 ModelArts embedding 模型
+                model="bge-m3"
             )
         except Exception as e:
-            print(f"⚠️ 初始化 OpenAI Embeddings 失败: {e}")
-            print("🔄 回退到本地 HuggingFace Embeddings...")
+            print(f"⚠️ Embedding 初始化失败: {e}")
             from langchain_community.embeddings import HuggingFaceEmbeddings
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name="BAAI/bge-small-zh-v1.5"
-            )
+            self.embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-small-zh-v1.5")
 
-        # 初始化长期记忆（FAISS）
+        # === 初始化 FAISS 记忆库 ===
         if os.path.exists(MEMORY_PATH):
             try:
                 self.vectorstore = FAISS.load_local(
@@ -67,89 +102,116 @@ class KatoChatbot:
 
         self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 2})
 
-        # 构建带长期记忆的 prompt
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", 
+        # === 绑定 search_memory 工具 ===
+        def _search_memory_impl(query: str) -> str:
+            docs = self.retriever.invoke(query)
+            return "\n".join([d.page_content for d in docs]) if docs else "未找到相关信息"
+        search_memory.func = _search_memory_impl
+
+        self.tools = [get_current_time, search_memory, get_sys_info]
+        self.tool_node = ToolNode(self.tools)
+
+        # === 构建 LangGraph ===
+        self.graph = self._build_graph()
+
+        self._full_history: List[BaseMessage] = []
+
+    def _build_graph(self):
+        # 系统提示（包含长期记忆）
+        prompt = ChatPromptTemplate.from_messages([
+            ("system",
              "你叫做Kato，是一个生活在现代精通技术，但是是昭和风格的日本短发女子，我是你的主人和朋友。\n"
              "以下是从长期记忆中检索到的主人相关信息（可能为空）：\n{long_term_memory}\n\n"
-             "请结合以上信息，使用温柔、谦逊且略带复古的日式中文口吻回答。"
+             "请结合以上信息，使用温柔、谦逊且略带复古的日式中文口吻回答。\n"
+             "你可以使用工具来帮助主人。"
             ),
-            ("placeholder", "{messages}"),
+            MessagesPlaceholder("messages"),
         ])
 
-        # 构建 chain
-        def retrieve_long_term_memory(messages: List[BaseMessage]) -> str:
-            # print("mess")
-            query = ""
-            for msg in reversed(messages):
-                if isinstance(msg, HumanMessage):
-                    query = msg.content
-                    break
-            if not query:
-                return "无相关信息"
-            print(query)
-            docs = self.retriever.invoke(query)
-            print("docs: ", [doc.page_content for doc in docs])
-            return "\n".join([doc.page_content for doc in docs]) if docs else "无相关信息"
+        # 节点1：调用 LLM（带工具绑定）
+        def call_model(state: KatoState):
+            long_term_memory = state.get("long_term_memory", "无相关信息")
+            messages = state["messages"]
 
-        self.chain = (
-            {
-                "long_term_memory": lambda x: retrieve_long_term_memory(x["messages"]),
-                "messages": lambda x: x["messages"]
-            }
-            | self.prompt
-            | self.llm
-        )
+            # 注入长期记忆到 system message
+            bound_prompt = prompt.partial(long_term_memory=long_term_memory)
+            llm_with_tools = self.llm.bind_tools(self.tools)
 
-        self._full_history: List[BaseMessage] = []  # 完整对话历史
+            chain = bound_prompt | llm_with_tools
+            response = chain.invoke({"messages": messages})
+            return {"messages": [response]}
 
-    async def _stream_response_with_history(self, messages: List[BaseMessage]) -> str:
-        """流式生成回复（传入完整历史）"""
+        # 节点2：决定下一步（是否调用工具）
+        def should_continue(state: KatoState) -> Literal["tools", "__end__"]:
+            messages = state["messages"]
+            last_message = messages[-1]
+            if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
+                return "tools"
+            return "__end__"
+
+        # 构建图
+        workflow = StateGraph(KatoState)
+        workflow.add_node("agent", call_model)
+        workflow.add_node("tools", self.tool_node)
+        workflow.add_edge(START, "agent")
+        workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "__end__": END})
+        workflow.add_edge("tools", "agent")
+
+        return workflow.compile()
+
+    def retrieve_long_term_memory(self, messages: List[BaseMessage]) -> str:
+        query = ""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                query = msg.content
+                break
+        if not query:
+            return "无相关信息"
+        docs = self.retriever.invoke(query)
+        return "\n".join([d.page_content for d in docs]) if docs else "无相关信息"
+
+    async def _stream_response(self, user_input: str) -> str:
+        """使用 LangGraph 流式生成回复"""
+        # 构建完整消息历史（包含新用户输入）
+        messages = self._full_history + [HumanMessage(content=user_input)]
+        long_term_memory = self.retrieve_long_term_memory(messages)
+
         full_response = ""
-        
-        # ✅ 直接调用 chain 而不是用 LangGraph（简化架构）
         try:
             with Live(
-                Panel("[dim]GPU飞速运转[/dim]", title="👧🏻 Kato", border_style="magenta", title_align="left"),
+                Panel("[dim]Kato正在思考...[/dim]", title="👧🏻 Kato", border_style="magenta", title_align="left"),
                 refresh_per_second=12,
                 auto_refresh=False
             ) as live:
-                # ✅ 直接流式调用 chain
-                async for chunk in self.chain.astream({"messages": messages}):
-                    if hasattr(chunk, 'content') and chunk.content:
-                        full_response += chunk.content
-                        live.update(
-                            Panel(full_response, title="👧🏻 Kato", border_style="magenta", title_align="left")
-                        )
-                        live.refresh()
+                input_state = {"messages": messages, "long_term_memory": long_term_memory}
+
+                # 使用 LangGraph 的 astream_events 流式输出
+                async for event in self.graph.astream_events(
+                    input_state, version="v1"
+                ):
+                    kind = event["event"]
+                    # 捕获 LLM 生成的 token
+                    if kind == "on_chat_model_stream":
+                        content = event["data"]["chunk"].content
+                        if content:
+                            full_response += content
+                            live.update(
+                                Panel(full_response, title="👧🏻 Kato", border_style="magenta", title_align="left")
+                            )
+                            live.refresh()
         except Exception as e:
             error_msg = f"呜...Kato 的通讯器出错了（{type(e).__name__}）"
             full_response = error_msg
-            print(f"❌ 流式响应错误: {e}")
-        
+            print(f"❌ LangGraph 流式错误: {e}")
+
         return full_response
 
     def chat(self, user_input: str) -> str:
-        """对外接口：处理用户输入并返回回复"""
-        user_message = HumanMessage(content=user_input)
-        
-        # 1. 构建完整上下文（短期记忆）
-        current_context = self._full_history + [user_message]
-        
-        # 2. 获取 AI 回复（✅ 统一使用 asyncio.run 处理异步）
-        try:
-            ai_response = asyncio.run(
-                self._stream_response_with_history(current_context)
-            )
-        except Exception as e:
-            print(f"⚠️ 异步调用失败: {e}")
-            # 降级为同步调用
-            response = self.chain.invoke({"messages": current_context})
-            ai_response = response.content if hasattr(response, 'content') else str(response)
-        
+        ai_response = asyncio.run(self._stream_response(user_input))
         ai_message = AIMessage(content=ai_response)
-        
-        # 3. 保存到长期记忆
+        user_message = HumanMessage(content=user_input)
+
+        # 保存到长期记忆（简单策略）
         if len(user_input.strip()) > 2 and "无相关信息" not in ai_response:
             memory_text = f"用户说：{user_input}"
             try:
@@ -158,15 +220,29 @@ class KatoChatbot:
                 print(f"💾 已保存记忆: {memory_text[:100]}...")
             except Exception as e:
                 print(f"⚠️ 保存长期记忆失败: {e}")
-        
-        # 4. 更新短期历史
+
+        # 更新可见历史（不包括 ToolMessage）
         self._full_history.extend([user_message, ai_message])
         return ai_response
 
     def reset(self):
-        """重置对话历史"""
         self._full_history = []
 
     def get_history(self):
-        """获取完整对话历史"""
         return self._full_history
+
+
+# # ===== 运行示例 =====
+# if __name__ == "__main__":
+#     bot = KatoChatbot()
+#     print("👧🏻 Kato：主人，您回来啦！今天想聊些什么呢？（输入 'quit' 退出）")
+#     while True:
+#         try:
+#             user_input = input("我：").strip()
+#             if user_input.lower() in ("quit", "exit", "再见"):
+#                 print("👧🏻 Kato：主人慢走～下次见！")
+#                 break
+#             bot.chat(user_input)
+#         except KeyboardInterrupt:
+#             print("\n👧🏻 Kato：主人要离开了吗？保重哦～")
+#             break
