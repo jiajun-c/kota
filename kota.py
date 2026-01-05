@@ -91,7 +91,7 @@ class KatoChatbot:
             return "\n".join([d.page_content for d in docs]) if docs else "未找到相关信息"
         search_memory.func = _search_memory_impl
 
-        self.tools = [get_current_time, search_memory, get_sys_info]
+        self.tools = [get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
         self.tool_node = ToolNode(self.tools)
 
         # === 构建 LangGraph ===
@@ -218,12 +218,13 @@ class KatoChatbot:
                 self.vectorstore.add_texts([memory_text])
                 self.vectorstore.save_local(MEMORY_PATH)
                 print(f"🧠 已生成并保存对话摘要: {summary[:100]}...")
-                
+                self._full_history = recent_msgs
             except Exception as e:
                 print(f"⚠️ 生成摘要失败: {e}")
 
         # 更新可见历史（仍保留完整对话用于上下文）
-        self._full_history = new_history
+        else:
+            self._full_history = new_history
         return ai_response
 
     def reset(self):
@@ -231,19 +232,3 @@ class KatoChatbot:
 
     def get_history(self):
         return self._full_history
-
-
-# # ===== 运行示例 =====
-# if __name__ == "__main__":
-#     bot = KatoChatbot()
-#     print("👧🏻 Kato：主人，您回来啦！今天想聊些什么呢？（输入 'quit' 退出）")
-#     while True:
-#         try:
-#             user_input = input("我：").strip()
-#             if user_input.lower() in ("quit", "exit", "再见"):
-#                 print("👧🏻 Kato：主人慢走～下次见！")
-#                 break
-#             bot.chat(user_input)
-#         except KeyboardInterrupt:
-#             print("\n👧🏻 Kato：主人要离开了吗？保重哦～")
-#             break
