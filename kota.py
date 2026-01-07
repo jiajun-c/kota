@@ -24,7 +24,7 @@ from tools import *
 # ===== 配置 =====
 DEFAULT_API_URL = "https://api.modelarts-maas.com/openai/v1"
 DEFAULT_API_KEY = "BsSYMYWWJqaVMAcJ8nfMXZiUFWWa_cbLjgaWWFM_MsmtoYpqClLr3jM8LOD6xnPJ2TnslTSwsT53iRyRPgDf_Q"
-MEMORY_PATH = "~/brain"
+MEMORY_PATH = "/home/star/brain"
 
 # ===== 状态定义 =====
 class KotaState(TypedDict):
@@ -58,6 +58,19 @@ class KotaChatbot:
             ])
             | self.llm
         )
+        self.sleep_chain = (
+            ChatPromptTemplate.from_messages([
+            ("system", 
+            "你正在执行夜间记忆整理任务。以下是全部记忆条目：\n\n{memories}\n\n"
+            "请完成以下操作：\n"
+            "1️⃣ **去重**：合并语义重复项\n"
+            "2️⃣ **提炼**：将碎片信息抽象为高阶事实（如习惯、偏好、技能）\n"
+            "3️⃣ **修正**：若发现矛盾，保留最新或更确定的信息\n"
+            "4️⃣ **遗忘**：移除无意义、情绪化或过时内容（如‘今天好累’）\n"
+            "5️⃣ **关联**：尝试建立跨领域联系（如‘学 Python’ + ‘做自动化’ → ‘主人是开发者’）\n\n"
+            "输出格式：仅返回清理后的记忆列表，每条以【类型】开头，如【事实】【习惯】【偏好】【技能】。"
+            )
+        ]) | self.llm)
         try:
             self.embeddings = OpenAIEmbeddings(
                 api_key=api_key,
@@ -89,9 +102,50 @@ class KotaChatbot:
         def _search_memory_impl(query: str) -> str:
             docs = self.retriever.invoke(query)
             return "\n".join([d.page_content for d in docs]) if docs else "未找到相关信息"
-        search_memory.func = _search_memory_impl
+        def _inspect_memory_impl() -> str:
+            print("正在检查记忆库...")
+            try:
+                vectorstore = self.vectorstore
+                if not vectorstore.index_to_docstore_id:
+                    return "当前无任何记忆。"
 
-        self.tools = [get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
+                all_texts = []
+                for idx in range(vectorstore.index.ntotal):  # ntotal = 向量总数
+                    doc_id = vectorstore.index_to_docstore_id.get(idx)
+                    if doc_id is None:
+                        continue
+                    # 使用私有 _dict（目前最可靠方式）
+                    doc = vectorstore.docstore._dict.get(doc_id)
+                    if doc and (content := getattr(doc, 'page_content', '').strip()):
+                        all_texts.append(f"[MEM-{idx}] {content}")
+                        # print(content)
+                return "\n".join(all_texts) if all_texts else "当前无任何有效记忆。"
+            except Exception as e:
+                print(f"⚠️ 读取记忆失败: {e}")
+                return f"读取记忆失败: {e}"
+        def _sleep(memory: str) -> str:
+            print("sleep\n")
+            """进行夜间记忆整理"""
+            return self.sleep_chain.invoke({"memories": memory}).content
+        def _rebuild_memory_impl(new_memories: List[str]) -> str:
+            """用新记忆列表重建 FAISS"""
+            print("重建 记忆库")
+            try:
+                if not new_memories or all(not m.strip() for m in new_memories):
+                    new_memories = ["无相关信息"]
+                # 清空并重建
+                self.vectorstore = FAISS.from_texts(new_memories, self.embeddings)
+                self.vectorstore.save_local(MEMORY_PATH)
+                self.retriever = self.vectorstore.as_retriever(search_kwargs={"k": 2})
+                return f"✅ 记忆库已重建，共 {len(new_memories)} 条记忆。"
+            except Exception as e:
+                return f"重建失败: {str(e)}"
+        
+        sleep.func = _sleep
+        search_memory.func = _search_memory_impl
+        inspect_memory.func = _inspect_memory_impl
+        rebuild_memory.func = _rebuild_memory_impl
+        self.tools = [sleep, inspect_memory, rebuild_memory, get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
         self.tool_node = ToolNode(self.tools)
 
         # === 构建 LangGraph ===
@@ -99,12 +153,19 @@ class KotaChatbot:
 
         self._full_history: List[BaseMessage] = []
 
+        
+    # def rebuild_memory(self) -> str:
+    #     """用新记忆列表重建 FAISS"""
+    #     texts = self._inspect_memory_impl()
+        # return self._rebuild_memory_impl(texts)
+    
     def _build_graph(self):
         # 系统提示（包含长期记忆）
         prompt = ChatPromptTemplate.from_messages([
             ("system",
              "你叫做Kota，是一个生活在现代精通技术，但是是昭和风格的日本短发女子，我是你的主人和朋友。\n"
              "以下是从长期记忆中检索到的主人相关信息（可能为空）：\n{long_term_memory}\n\n"
+             "简单问题尽量简短回答\n"
              "请结合以上信息，使用温柔、谦逊且略带复古的日式中文口吻回答。\n"
              "你可以使用工具来帮助主人。"
             ),
