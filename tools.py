@@ -5,6 +5,7 @@ import os
 import requests
 import subprocess
 import shlex
+from langchain_community.document_loaders import TextLoader
 @tool
 def get_current_time() -> str:
     """获取当前的日期和时间"""
@@ -13,6 +14,7 @@ def get_current_time() -> str:
 @tool
 def get_sys_info() -> str:
     """获取当前系统信息"""
+    print("获取系统信息...")
     return f"当前系统{os.uname()}"
 
 @tool
@@ -34,6 +36,41 @@ def ls(path: str = ".") -> str:
         return f"错误: {str(e)}"
     
 import shlex
+
+import subprocess
+import os
+@tool
+def execute_command(command: str, timeout: int = 30) -> str:
+    """
+    在后台执行 shell 命令并返回输出结果（不打开任何终端窗口）。
+    
+    :param command: 要执行的 shell 命令（如 "ls -l && pwd"）
+    :param timeout: 命令超时时间（秒），防止卡死
+    :return: 命令的标准输出 + 标准错误（若失败），或成功结果
+    """
+    try:
+        # 加载 shell 配置（可选，根据你的环境需求调整）
+        shell_env = os.environ.copy()
+        # 可选：显式指定 PATH 或加载 .zshrc（但注意非交互式 shell 可能不加载）
+        # 这里用 zsh -l 保证加载 login shell 环境
+        result = subprocess.run(
+            ["/bin/zsh", "-l", "-c", command],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=shell_env,
+            cwd=os.getcwd()
+        )
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            return output if output else "命令执行成功，无输出。"
+        else:
+            error_msg = result.stderr.strip() or f"命令退出码: {result.returncode}"
+            return f"❌ 执行失败:\n{error_msg}"
+    except subprocess.TimeoutExpired:
+        return f"⏰ 命令执行超时（>{timeout}秒），已终止。"
+    except Exception as e:
+        return f"💥 执行异常: {type(e).__name__}: {e}"
 
 def open_konsole_with_command(command: str, stay_open: bool = True):
     """
@@ -90,3 +127,13 @@ def rebuild_memory(new_memories: List[str]) -> str:
 def sleep(memory: str) -> str:
     """kota进行睡眠，睡眠中对记忆进行整理，生成新的记忆列表。输入：记忆条目，来自inspect_memory，完成后说自己睡醒了"""
     pass  # 由 KotaChatbot 动态绑定实现
+
+@tool
+def readfile(path: str) -> str:
+    """
+    读取文件内容
+    :param path: 文件路径
+    """
+    return TextLoader(path).load()[0].page_content
+
+# print(TextLoader("/home/star/.zshrc").load()[0].page_content)

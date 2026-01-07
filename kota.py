@@ -4,6 +4,7 @@ import datetime
 import os
 import readline
 from typing import List, Annotated, Sequence, Literal, TypedDict
+from langchain.agents.middleware import ToolCallLimitMiddleware
 
 from langchain_core.messages import (
     HumanMessage, AIMessage, ToolMessage, BaseMessage
@@ -25,11 +26,13 @@ from tools import *
 DEFAULT_API_URL = "https://api.modelarts-maas.com/openai/v1"
 DEFAULT_API_KEY = "BsSYMYWWJqaVMAcJ8nfMXZiUFWWa_cbLjgaWWFM_MsmtoYpqClLr3jM8LOD6xnPJ2TnslTSwsT53iRyRPgDf_Q"
 MEMORY_PATH = "/home/star/brain"
+MAX_TOOL_CALLS = 10 # ← 你可以调整这个值
 
 # ===== 状态定义 =====
 class KotaState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     long_term_memory: str
+    tool_call_count: int  # ← 新增：累计工具调用次数
 
 class KotaChatbot:
     def __init__(
@@ -145,7 +148,7 @@ class KotaChatbot:
         search_memory.func = _search_memory_impl
         inspect_memory.func = _inspect_memory_impl
         rebuild_memory.func = _rebuild_memory_impl
-        self.tools = [sleep, inspect_memory, rebuild_memory, get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
+        self.tools = [execute_command, readfile, sleep, inspect_memory, rebuild_memory, get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
         self.tool_node = ToolNode(self.tools)
 
         # === 构建 LangGraph ===
@@ -189,17 +192,34 @@ class KotaChatbot:
         def should_continue(state: KotaState) -> Literal["tools", "__end__"]:
             messages = state["messages"]
             last_message = messages[-1]
+
+            # 检查是否要调用工具
             if hasattr(last_message, "tool_calls") and len(last_message.tool_calls) > 0:
+                current_count = state.get("tool_call_count", 0)
+                if current_count >= MAX_TOOL_CALLS:
+                    # 超限：不再调用工具，直接结束
+                    return "__end__"
                 return "tools"
             return "__end__"
-
+        def update_tool_count(state: KotaState) -> dict:
+            """工具调用后，递增计数器"""
+            current = state.get("tool_call_count", 0)
+            return {"tool_call_count": current + 1}
         # 构建图
         workflow = StateGraph(KotaState)
         workflow.add_node("agent", call_model)
         workflow.add_node("tools", self.tool_node)
+        workflow.add_node("update_tool_count", update_tool_count)  # ← 新增
+
         workflow.add_edge(START, "agent")
-        workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", "__end__": END})
-        workflow.add_edge("tools", "agent")
+        workflow.add_conditional_edges(
+            "agent",
+            should_continue,
+            {"tools": "tools", "__end__": END}
+        )
+        # 关键：工具执行后更新计数，再回到 agent
+        workflow.add_edge("tools", "update_tool_count")
+        workflow.add_edge("update_tool_count", "agent")
 
         return workflow.compile()
 
@@ -228,7 +248,11 @@ class KotaChatbot:
                 refresh_per_second=12,
                 auto_refresh=False
             ) as live:
-                input_state = {"messages": messages, "long_term_memory": long_term_memory}
+                input_state = {
+                    "messages": messages,
+                    "long_term_memory": long_term_memory,
+                    "tool_call_count" : 0,
+                }
 
                 # 使用 LangGraph 的 astream_events 流式输出
                 async for event in self.graph.astream_events(
