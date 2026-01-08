@@ -8,7 +8,7 @@ An AI agent for kde desktop
 
 reAct framework with LangChain, LangGraph and Faiss
 
-![alt text](微信图片_20260108152724.jpg)
+![alt text](./assert/arch.jpg)
 
 ## feature
 
