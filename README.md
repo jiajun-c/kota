@@ -33,3 +33,6 @@ Implements a tool call limit (MAX_TOOL_CALLS = 10) to prevent infinite loops or 
 - [ ] mcp/skills
 
 ## video
+
+https://github.com/user-attachments/assets/99eeab3e-cff3-4aff-bcf3-0e282d05d573
+
