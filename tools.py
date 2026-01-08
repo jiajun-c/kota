@@ -5,7 +5,8 @@ import os
 import requests
 import subprocess
 import shlex
-from langchain_community.document_loaders import TextLoader
+from langchain_community.document_loaders import TextLoader,PyPDFLoader
+
 @tool
 def get_current_time() -> str:
     """获取当前的日期和时间"""
@@ -34,11 +35,29 @@ def ls(path: str = ".") -> str:
         return "错误: 权限不足"
     except Exception as e:
         return f"错误: {str(e)}"
+@tool
+def grep(content: str, grepstr: str):
+    """
+    在给定的字符串内容中搜索包含 grepstr 的行。
     
-import shlex
+    参数:
+        content (str): 要搜索的完整文本内容（多行字符串）。
+        grepstr (str): 要搜索的子字符串。
+    
+    返回:
+        list of dict: 每个匹配行的信息，包含行号（从1开始）和内容。
+                      例如: [{"line_number": 3, "content": "foo bar\\n"}, ...]
+    """
+    matches = []
+    lines = content.splitlines(keepends=True)
+    for line_num, line in enumerate(lines, start=1):
+        if grepstr in line:
+            matches.append({
+                "line_number": line_num,
+                "content": line
+            })
+    return matches
 
-import subprocess
-import os
 @tool
 def execute_command(command: str, timeout: int = 30) -> str:
     """
@@ -131,9 +150,72 @@ def sleep(memory: str) -> str:
 @tool
 def readfile(path: str) -> str:
     """
-    读取文件内容
+    读取文本文件内容
     :param path: 文件路径
     """
     return TextLoader(path).load()[0].page_content
 
 # print(TextLoader("/home/star/.zshrc").load()[0].page_content)
+
+def readpdffile(path: str) -> str:
+    """
+    读取PDF文件所有页面的内容并合并为单个字符串
+    :param path: PDF文件路径
+    :return: 所有页面的文本内容（按页拼接）
+    """
+    try:
+        # 创建加载器
+        loader = PyPDFLoader(path)
+        
+        # 加载所有页面（返回 Document 对象列表）
+        pages = loader.load()
+        
+        # 提取所有页面的文本内容并合并
+        full_text = "\n".join(page.page_content for page in pages)
+        
+        return full_text
+    
+    except Exception as e:
+        return f"❌ PDF读取失败: {str(e)}"
+    
+# loader = PyPDFLoader("example_data/layout-parser-paper.pdf")
+# pages = loader.load_and_split()
+def request_file_upload_via_kdialog(path: str = "/home/star", filesuffix="") -> str:
+    """
+    打开文件管理器用于选择文件。
+    仅适用于 KDE 桌面环境。
+    :param path: 默认打开的目录
+    :param filesuffix: 文件后缀，如*.png
+    """
+    print(f"\n📎 Kota 请求上传文件:")
+    # print("正在启动 KDE 文件选择器...")
+
+    try:
+        # 构造 kdialog 命令
+        cmd = [
+            "kdialog",
+            "--getopenfilename",
+            path,  # 默认打开目录
+            filesuffix,
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60  # 最多等待 60 秒
+        )
+
+        if result.returncode == 0 and result.stdout.strip():
+            file_path = result.stdout.strip()
+            return f"用户选择了文件: {file_path}"
+        else:
+            return "用户取消了文件选择或 kdialog 未响应。"
+
+    except FileNotFoundError:
+        return "❌ kdialog 未安装（仅支持 KDE 桌面）。请使用其他方式上传。"
+    except subprocess.TimeoutExpired:
+        return "❌ 文件选择超时（60秒未操作）。"
+    except Exception as e:
+        return f"❌ 调用 kdialog 失败: {type(e).__name__}: {e}"

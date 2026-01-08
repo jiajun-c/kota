@@ -148,7 +148,7 @@ class KotaChatbot:
         search_memory.func = _search_memory_impl
         inspect_memory.func = _inspect_memory_impl
         rebuild_memory.func = _rebuild_memory_impl
-        self.tools = [execute_command, readfile, sleep, inspect_memory, rebuild_memory, get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
+        self.tools = [readpdffile,request_file_upload_via_kdialog,grep, execute_command, readfile, sleep, inspect_memory, rebuild_memory, get_current_time, search_memory, get_sys_info, ls, open_konsole_with_command, open_application]
         self.tool_node = ToolNode(self.tools)
 
         # === 构建 LangGraph ===
@@ -321,3 +321,4 @@ class KotaChatbot:
 
     def get_history(self):
         return self._full_history
+
