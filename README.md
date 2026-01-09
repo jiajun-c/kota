@@ -1,4 +1,4 @@
-# kota
+<img width="1124" height="578" alt="image" src="https://github.com/user-attachments/assets/b6a874ca-0252-4000-9135-531de7097d78" /># kota
 
 ![kota](./img/kota.png)
 
@@ -8,7 +8,7 @@ An AI agent for kde desktop
 
 reAct framework with LangChain, LangGraph and Faiss
 
-![alt text](./assert/arch.jpg)
+<img width="1124" height="578" alt="image" src="https://github.com/user-attachments/assets/d312c823-18b5-4ffa-8308-a8c35821e769" />
 
 ## feature
 
