@@ -26,6 +26,7 @@ reAct framework with LangChain, LangGraph and Faiss
 - [x] LangGraph-Powered Agent Workflow:
 - [x] Safe Tool Execution:
 Implements a tool call limit (MAX_TOOL_CALLS = 10) to prevent infinite loops or excessive tool usage.
+- [x] Tools Router: use a router node to dynamically add tools to the agent.
 - [ ] RAG
 - [ ] version + voice
 - [ ] Self-awareness
