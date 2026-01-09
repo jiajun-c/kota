@@ -8,21 +8,10 @@ import shlex
 from langchain_community.document_loaders import TextLoader,PyPDFLoader
 
 @tool
-def get_current_time() -> str:
-    """获取当前的日期和时间"""
-    return datetime.datetime.now().strftime("%Y年%m月%d日 %H:%M")
-
-@tool
 def get_sys_info() -> str:
     """获取当前系统信息"""
     print("获取系统信息...")
     return f"当前系统{os.uname()}"
-
-@tool
-def search_memory(query: str) -> str:
-    """从长期记忆中搜索相关信息（实际逻辑在 Chatbot 类中绑定）"""
-    return "未绑定检索器"  # 占位
-
 @tool
 def ls(path: str = ".") -> str:
     """列出指定目录的文件名（不调用 shell，更安全）"""
@@ -132,22 +121,6 @@ def open_application(app_name: str):
         print(f"❌ 启动失败: {e}")
 
 @tool
-def inspect_memory() -> str:
-    """检查所有长期记忆内容，返回全部记忆条目（用于去重和深化）。"""
-    pass  # 由 KotaChatbot 动态绑定实现
-
-@tool
-def rebuild_memory(new_memories: List[str]) -> str:
-    """用新的记忆列表完全重建长期记忆库。输入：字符串列表，每条是一个记忆片段。"""
-    pass  # 由 KotaChatbot 动态绑定实现
-
-
-@tool
-def sleep(memory: str) -> str:
-    """kota进行睡眠，睡眠中对记忆进行整理，生成新的记忆列表。输入：记忆条目，来自inspect_memory，完成后说自己睡醒了"""
-    pass  # 由 KotaChatbot 动态绑定实现
-
-@tool
 def readfile(path: str) -> str:
     """
     读取文本文件内容
@@ -184,10 +157,10 @@ def request_file_upload_via_kdialog(path: str = "/home/star", filesuffix="") -> 
     """
     打开文件管理器用于选择文件。
     仅适用于 KDE 桌面环境。
-    :param path: 默认打开的目录
+    :param path: 打开的目录,替换~部分为/home/star，其他部分不变
     :param filesuffix: 文件后缀，如*.png
     """
-    print(f"\n📎 Kota 请求上传文件:")
+    print(f"\n📎 Kota 请求上传文件:", path)
     # print("正在启动 KDE 文件选择器...")
 
     try:

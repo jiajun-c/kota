@@ -5,6 +5,7 @@ import os
 import readline
 from typing import List, Annotated, Sequence, Literal, TypedDict
 from langchain.agents.middleware import ToolCallLimitMiddleware
+from langchain_core.output_parsers import StrOutputParser
 
 from langchain_core.messages import (
     HumanMessage, AIMessage, ToolMessage, BaseMessage
@@ -19,12 +20,25 @@ from langgraph.prebuilt import ToolNode
 from langgraph.graph.message import add_messages
 from rich.live import Live
 from rich.panel import Panel
-from tools import *
+# from tools import *
+import tools
+import tools.env
+import tools.memory as memory
+import inspect
 
+from tools.system import * 
+from tools.memory import *
+from tools.env import *
 
+systemtools = [open_application, ls, get_sys_info,execute_command, grep, readfile, readpdffile, request_file_upload_via_kdialog,open_konsole_with_command]
+envtools = [get_current_time]
+memtools =[rebuild_memory, sleep, inspect_memory, search_memory]
+
+# print("找到的内存工具:", [f.__name__ for f in memtools])
 # ===== 配置 =====
-DEFAULT_API_URL = "https://api.modelarts-maas.com/openai/v1"
-DEFAULT_API_KEY = "BsSYMYWWJqaVMAcJ8nfMXZiUFWWa_cbLjgaWWFM_MsmtoYpqClLr3jM8LOD6xnPJ2TnslTSwsT53iRyRPgDf_Q"
+DEFAULT_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+HW_API_KEY = ""
+ALI_API_KEY = ""
 MEMORY_PATH = "/home/star/brain"
 MAX_TOOL_CALLS = 10 # ← 你可以调整这个值
 
@@ -37,9 +51,9 @@ class KotaState(TypedDict):
 class KotaChatbot:
     def __init__(
         self,
-        api_key: str = DEFAULT_API_KEY,
+        api_key: str = ALI_API_KEY,
         base_url: str = DEFAULT_API_URL,
-        model: str = "deepseek-v3.1-terminus",
+        model: str = "qwen-flash",
         temperature: float = 0.6,
         max_tokens: int = 1024
     ):
@@ -61,6 +75,14 @@ class KotaChatbot:
             ])
             | self.llm
         )
+        self.router_chain = (
+            ChatPromptTemplate.from_messages([
+                ("system", "请判断用户意图需要下面的几类工具：env(外部因素，如时间空间), memory(记忆相关), system（系统工具),返回一个数组如[env, memory, system],可以为空"),
+                ("human", "{input}")
+            ])
+            | self.llm | StrOutputParser()
+        )
+        # print(self.router_chain.invoke("我的电脑是什么cpu"))
         self.sleep_chain = (
             ChatPromptTemplate.from_messages([
             ("system", 
@@ -76,7 +98,7 @@ class KotaChatbot:
         ]) | self.llm)
         try:
             self.embeddings = OpenAIEmbeddings(
-                api_key=api_key,
+                api_key=HW_API_KEY,
                 base_url="https://api.modelarts-maas.com/v1",
                 model="bge-m3"
             )
@@ -126,6 +148,7 @@ class KotaChatbot:
             except Exception as e:
                 print(f"⚠️ 读取记忆失败: {e}")
                 return f"读取记忆失败: {e}"
+        
         def _sleep(memory: str) -> str:
             print("sleep\n")
             """进行夜间记忆整理"""
@@ -207,11 +230,12 @@ class KotaChatbot:
             return {"tool_call_count": current + 1}
         # 构建图
         workflow = StateGraph(KotaState)
+        workflow.add_node("router", self.route_intent)
         workflow.add_node("agent", call_model)
         workflow.add_node("tools", self.tool_node)
         workflow.add_node("update_tool_count", update_tool_count)  # ← 新增
-
-        workflow.add_edge(START, "agent")
+        workflow.add_edge(START, "router")
+        workflow.add_edge("router", "agent")
         workflow.add_conditional_edges(
             "agent",
             should_continue,
@@ -222,6 +246,17 @@ class KotaChatbot:
         workflow.add_edge("update_tool_count", "agent")
 
         return workflow.compile()
+
+    def route_intent(self, state: KotaState):
+        intent = self.router_chain.invoke({"input": state["messages"][-1].content})
+        # print(f"🎰: {intent}")
+        self.tools = [get_current_time]
+        if "system" in intent:
+            self.tools += systemtools
+        if "memory" in intent:
+            self.tools += memtools
+        if "env" in intent:
+            self.tools += envtools
 
     def retrieve_long_term_memory(self, messages: List[BaseMessage]) -> str:
         query = ""

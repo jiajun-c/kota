@@ -9,7 +9,7 @@ def main():
     kota = KotaChatbot()
     # kota.rebuild_memory()
     # 打个招呼
-    # kota.chat("你好")
+    kota.chat("你好")
 
     while True:
         exit = False
