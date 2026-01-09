@@ -1,5 +1,3 @@
-<img width="1124" height="578" alt="image" src="https://github.com/user-attachments/assets/b6a874ca-0252-4000-9135-531de7097d78" /># kota
-
 ![kota](./img/kota.png)
 
 An AI agent for kde desktop
